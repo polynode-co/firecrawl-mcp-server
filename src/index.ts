@@ -19,6 +19,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { randomUUID } from 'node:crypto';
+import { safeLog } from './utils/log.js';
 
 dotenv.config();
 
@@ -932,29 +933,6 @@ function delay(ms: number): Promise<void> {
 }
 
 let isStdioTransport = false;
-
-function safeLog(
-  level:
-    | 'error'
-    | 'debug'
-    | 'info'
-    | 'notice'
-    | 'warning'
-    | 'critical'
-    | 'alert'
-    | 'emergency',
-  data: any
-): void {
-  try {
-    // Always log to stderr to avoid relying on MCP logging capability
-    const message = `[${level}] ${
-      typeof data === 'object' ? JSON.stringify(data) : String(data)
-    }`;
-    console.error(message);
-  } catch (_) {
-    // ignore
-  }
-}
 
 // Add retry logic with exponential backoff
 async function withRetry<T>(

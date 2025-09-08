@@ -16,6 +16,7 @@ import FirecrawlApp, {
 
 // import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
+import { safeLog } from './utils/log.js';
 
 dotenv.config();
 
@@ -875,24 +876,7 @@ export function createV1Server() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function safeLog(
-    level:
-      | 'error'
-      | 'debug'
-      | 'info'
-      | 'notice'
-      | 'warning'
-      | 'critical'
-      | 'alert'
-      | 'emergency',
-    data: any
-  ): void {
-    // Always log to stderr to avoid relying on MCP logging capability
-    const message = `[V1][${level}] ${
-      typeof data === 'object' ? JSON.stringify(data) : String(data)
-    }`;
-    console.error(message);
-  }
+  // use shared safeLog via import (scope V1)
 
   // Add retry logic with exponential backoff
   async function withRetry<T>(
