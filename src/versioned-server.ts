@@ -119,7 +119,7 @@ export async function runVersionedSSECloudServer() {
         enrichedBody.params._meta.apiKey = apiKey;
       }
 
-      console.log(`[V1] Message received for API key: ${apiKey}`);
+      // session-aware logging will be emitted after sessionId resolution
 
       // Prefer explicit sessionId from query, then common header names
       const rawSessionId =
@@ -127,6 +127,10 @@ export async function runVersionedSSECloudServer() {
         (req.headers['mcp-session-id'] as string) ||
         (req.headers['x-mcp-session-id'] as string) ||
         '';
+
+      console.log(
+        `[V1][sid:${rawSessionId || 'unknown'}] Message received for API key: ${apiKey}`
+      );
 
       let compositeKey = `${apiKey}-${rawSessionId}`;
       let versionedTransport = transports[compositeKey];
@@ -139,7 +143,7 @@ export async function runVersionedSSECloudServer() {
         if (candidates.length === 1) {
           const [fallbackKey, vt] = candidates[0];
           console.warn(
-            `[V1] sessionId not provided or not found. Falling back to single active transport: ${fallbackKey}`
+            `[V1][sid:${rawSessionId || 'unknown'}] sessionId not provided or not found. Falling back to single active transport: ${fallbackKey}`
           );
           compositeKey = fallbackKey;
           versionedTransport = vt;
@@ -153,7 +157,9 @@ export async function runVersionedSSECloudServer() {
           enrichedBody
         );
       } else {
-        console.error(`[V1] No transport found for sessionId: ${compositeKey}`);
+        console.error(
+          `[V1][sid:${rawSessionId || 'unknown'}] No transport found for sessionId: ${compositeKey}`
+        );
         res.status(400).json({
           error: 'No V1 transport found for sessionId',
         });
@@ -184,9 +190,10 @@ export async function runVersionedSSECloudServer() {
         enrichedBody.params._meta.apiKey = apiKey;
       }
 
-      console.log(`[V2] Message received for API key: ${apiKey}`);
-
       const sessionId = req.query.sessionId as string;
+      console.log(
+        `[V2][sid:${sessionId || 'unknown'}] Message received for API key: ${apiKey}`
+      );
       const compositeKey = `${apiKey}-${sessionId}`;
       const versionedTransport = transports[compositeKey];
 
@@ -197,7 +204,9 @@ export async function runVersionedSSECloudServer() {
           enrichedBody
         );
       } else {
-        console.error(`[V2] No transport found for sessionId: ${compositeKey}`);
+        console.error(
+          `[V2][sid:${sessionId || 'unknown'}] No transport found for sessionId: ${compositeKey}`
+        );
         res.status(400).json({
           error: 'No V2 transport found for sessionId',
         });
@@ -227,9 +236,11 @@ export async function runVersionedSSECloudServer() {
           (req.headers['x-mcp-session-id'] as string) ||
           '';
 
+        const sidLog = existingSessionId || 'init';
+        console.log(`[V1][HTTP][sid:${sidLog}] Route entered`);
         if (existingSessionId) {
           console.log(
-            `[V1][HTTP] Incoming ${req.method} for session ${existingSessionId}`
+            `[V1][HTTP][sid:${existingSessionId}] Incoming ${req.method}`
           );
         }
 
@@ -253,7 +264,7 @@ export async function runVersionedSSECloudServer() {
             sessionIdGenerator: () => randomUUID(),
             onsessioninitialized: (sid: string) => {
               httpTransports[sid] = { transport, version: 'v1', apiKey };
-              console.log(`[V1][HTTP] Initialized session ${sid}`);
+              console.log(`[V1][HTTP][sid:${sid}] Initialized session`);
             },
           });
 
@@ -262,12 +273,23 @@ export async function runVersionedSSECloudServer() {
             if (sid && httpTransports[sid]) delete httpTransports[sid];
           };
 
+          console.log('[V1][HTTP][sid:init] Connecting transport to server');
           await v1Server.connect(transport);
+          const t1 = Date.now();
+          console.log(
+            '[V1][HTTP][sid:init] Calling handleRequest for initialize'
+          );
           await transport.handleRequest(req, res, body);
+          console.log(
+            `[V1][HTTP][sid:${transport.sessionId || 'unknown'}] handleRequest (initialize) completed in ${Date.now() - t1}ms`
+          );
           return;
         }
 
         // No session found and not initialize
+        console.error(
+          `[V1][HTTP][sid:${existingSessionId || 'unknown'}] Invalid or missing session ID`
+        );
         res.status(400).json({
           jsonrpc: '2.0',
           error: { code: -32000, message: 'Invalid or missing session ID' },
@@ -275,6 +297,15 @@ export async function runVersionedSSECloudServer() {
         });
       } catch (error) {
         if (!res.headersSent) {
+          const sidForErr =
+            (req.query.sessionId as string) ||
+            (req.headers['mcp-session-id'] as string) ||
+            (req.headers['x-mcp-session-id'] as string) ||
+            'unknown';
+          console.error(
+            `[V1][HTTP][sid:${sidForErr}] Internal server error`,
+            error
+          );
           res.status(500).json({
             jsonrpc: '2.0',
             error: { code: -32603, message: 'Internal server error' },
@@ -306,10 +337,27 @@ export async function runVersionedSSECloudServer() {
           (req.headers['mcp-session-id'] as string) ||
           (req.headers['x-mcp-session-id'] as string) ||
           '';
-
+        const sidLogV2 = existingSessionId || 'init';
+        console.log(`[V2][HTTP][sid:${sidLogV2}] Route entered`);
+        console.log(
+          `[V2][HTTP][sid:${sidLogV2}] headers accept=${req.headers['accept'] || ''} content-type=${req.headers['content-type'] || ''}`
+        );
+        if (body && typeof body === 'object') {
+          console.log(
+            `[V2][HTTP][sid:${sidLogV2}] body.method=${(body as any).method || ''}`
+          );
+        }
+        const startTs = Date.now();
+        res.on('finish', () => {
+          console.log(
+            `[V2][HTTP][sid:${sidLogV2}] response status=${res.statusCode} content-type=${String(
+              res.getHeader('content-type') || ''
+            )} duration=${Date.now() - startTs}ms`
+          );
+        });
         if (existingSessionId) {
           console.log(
-            `[V2][HTTP] Incoming ${req.method} for session ${existingSessionId}`
+            `[V2][HTTP][sid:${existingSessionId}] Incoming ${req.method}`
           );
         }
 
@@ -319,21 +367,29 @@ export async function runVersionedSSECloudServer() {
           httpTransports[existingSessionId].version === 'v2' &&
           httpTransports[existingSessionId].apiKey === apiKey
         ) {
+          console.log(
+            `[V2][HTTP][sid:${existingSessionId}] Delegating to existing transport`
+          );
+          const t0 = Date.now();
           await httpTransports[existingSessionId].transport.handleRequest(
             req,
             res,
             body
+          );
+          console.log(
+            `[V2][HTTP][sid:${existingSessionId}] handleRequest (existing) completed in ${Date.now() - t0}ms`
           );
           return;
         }
 
         // Create new streamable transport on initialize
         if (body && body.method === 'initialize') {
+          console.log('[V2][HTTP][sid:init] Initializing new session');
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
             onsessioninitialized: (sid: string) => {
               httpTransports[sid] = { transport, version: 'v2', apiKey };
-              console.log(`[V2][HTTP] Initialized session ${sid}`);
+              console.log(`[V2][HTTP][sid:${sid}] Initialized session`);
             },
           });
 
@@ -342,12 +398,23 @@ export async function runVersionedSSECloudServer() {
             if (sid && httpTransports[sid]) delete httpTransports[sid];
           };
 
+          console.log('[V2][HTTP][sid:init] Connecting transport to server');
           await v2Server.connect(transport);
+          const t1 = Date.now();
+          console.log(
+            '[V2][HTTP][sid:init] Calling handleRequest for initialize'
+          );
           await transport.handleRequest(req, res, body);
+          console.log(
+            `[V2][HTTP][sid:${transport.sessionId || 'unknown'}] handleRequest (initialize) completed in ${Date.now() - t1}ms`
+          );
           return;
         }
 
         // No session found and not initialize
+        console.error(
+          `[V2][HTTP][sid:${(req.headers['mcp-session-id'] as string) || (req.headers['x-mcp-session-id'] as string) || 'unknown'}] Invalid or missing session ID`
+        );
         res.status(400).json({
           jsonrpc: '2.0',
           error: { code: -32000, message: 'Invalid or missing session ID' },
@@ -355,6 +422,10 @@ export async function runVersionedSSECloudServer() {
         });
       } catch (error) {
         if (!res.headersSent) {
+          console.error(
+            `[V2][HTTP][sid:${(req.headers['mcp-session-id'] as string) || (req.headers['x-mcp-session-id'] as string) || 'unknown'}] Internal server error`,
+            error
+          );
           res.status(500).json({
             jsonrpc: '2.0',
             error: { code: -32603, message: 'Internal server error' },
